@@ -9,8 +9,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Database\Schema\Blueprint;
-use LogicException;
 use PHPUnit\Framework\TestCase;
+use Illuminate\Database\Eloquent\Exceptions\MissingForeignKeyException;
 
 class DatabaseEloquentWithDefaultBehaviorTest extends TestCase
 {
@@ -30,6 +30,9 @@ class DatabaseEloquentWithDefaultBehaviorTest extends TestCase
 
         $db->bootEloquent();
         $db->setAsGlobal();
+
+        $dispatcher = new \Illuminate\Events\Dispatcher();
+        Model::setEventDispatcher($dispatcher);
 
         $this->createSchema();
     }
@@ -61,6 +64,27 @@ class DatabaseEloquentWithDefaultBehaviorTest extends TestCase
             $table->string('name');
             $table->timestamps();
         });
+
+        $this->schema()->create('orders', function (Blueprint $table) {
+            $table->increments('id');
+            $table->integer('customer_id');
+            $table->string('status')->default('pending');
+            $table->timestamps();
+        });
+
+        $this->schema()->create('customers', function (Blueprint $table) {
+            $table->increments('id');
+            $table->string('name');
+            $table->timestamps();
+        });
+
+        $this->schema()->create('comments', function (Blueprint $table) {
+            $table->increments('id');
+            $table->integer('commentable_id');
+            $table->string('commentable_type');
+            $table->text('content');
+            $table->timestamps();
+        });
     }
 
     /**
@@ -74,6 +98,11 @@ class DatabaseEloquentWithDefaultBehaviorTest extends TestCase
         $this->schema()->drop('wallets');
         $this->schema()->drop('profiles');
         $this->schema()->drop('users');
+        $this->schema()->drop('orders');
+        $this->schema()->drop('customers');
+        $this->schema()->drop('comments');
+
+        parent::tearDown();
     }
 
     public function testWithDefaultReturnsUnsavedModelInstance()
@@ -87,21 +116,20 @@ class DatabaseEloquentWithDefaultBehaviorTest extends TestCase
         $this->assertSame(0, $wallet->balance);
     }
 
-    public function testSavingUnsavedDefaultModelWithoutKeysThrowsException()
+    public function testSavingUnsavedDefaultModelWithNullableKeysSucceeds()
     {
         $business = new Business(['name' => 'Acme Inc.']);
         $business->save();
 
         $wallet = $business->wallet;
         $wallet->holder_id = null;
+        $wallet->holder_type = null;
 
         $this->assertInstanceOf(Wallet::class, $wallet);
-        $this->assertFalse($wallet->exists);
-        $this->assertSame(0, $wallet->balance);
-        $this->assertNull($wallet->holder_id);
+        $this->assertTrue($wallet->isDefaultInstance);
 
-        $this->expectException(LogicException::class);
-        $wallet->save();
+        $result = $wallet->save();
+        $this->assertTrue($result);
     }
 
     public function testDefaultModelCanBeSavedIfForeignKeysAreSet()
@@ -145,7 +173,7 @@ class DatabaseEloquentWithDefaultBehaviorTest extends TestCase
         $wallet->save();
     }
 
-    public function testBelongsToWithDefaultThrowsExceptionWhenSavingWithoutKeys()
+    public function testBelongsToWithDefaultSucceedsWithNullableKeys()
     {
         $profile = new Profile();
         $profile->save();
@@ -155,8 +183,8 @@ class DatabaseEloquentWithDefaultBehaviorTest extends TestCase
         $this->assertInstanceOf(TestUserModel::class, $user);
         $this->assertFalse($user->exists);
 
-        $this->expectException(LogicException::class);
-        $user->save();
+        $result = $user->save();
+        $this->assertTrue($result);
     }
 
     public function testTouchingDefaultModelDoesNotThrowException()
@@ -169,12 +197,105 @@ class DatabaseEloquentWithDefaultBehaviorTest extends TestCase
         $this->assertTrue($wallet->touch());
     }
 
+    public function testMissingForeignKeyExceptionProvidesDetailedInformation()
+    {
+        $customer = new Customer(['name' => 'Test Customer']);
+        $customer->save();
+
+        $order = $customer->order;
+        $order->customer_id = null;
+
+        try {
+            $order->save();
+            $this->fail('Expected MissingForeignKeyException was not thrown');
+        } catch (MissingForeignKeyException $e) {
+            $this->assertInstanceOf(Order::class, $e->getModel());
+            $this->assertContains('customer_id', $e->getMissingKeys());
+            $this->assertStringContainsString('customer_id', $e->getMessage());
+        }
+    }
+
+    public function testNullableForeignKeysDoNotThrowException()
+    {
+        $business = new Business();
+        $business->name = 'Test Business';
+        $business->save();
+
+        $wallet = $business->wallet;
+
+        $this->assertInstanceOf(Wallet::class, $wallet);
+        $this->assertTrue($wallet->isDefaultInstance);
+
+        $result = $wallet->save();
+        $this->assertTrue($result);
+    }
+
+    public function testNonNullableForeignKeysThrowException()
+    {
+        $customer = new Customer(['name' => 'Test Customer']);
+        $customer->save();
+
+        $order = $customer->order;
+
+        $this->assertInstanceOf(Order::class, $order);
+        $this->assertTrue($order->isDefaultInstance);
+
+        $order->customer_id = null;
+
+        $this->expectException(MissingForeignKeyException::class);
+        $order->save();
+    }
+
+    public function testNonNullableForeignKeyCanBeSavedWhenSet()
+    {
+        $customer = new Customer();
+        $customer->name = 'Test Customer';
+        $customer->save();
+
+        $order = $customer->order;
+
+        $order->customer_id = $customer->id;
+
+        $result = $order->save();
+        $this->assertTrue($result);
+    }
+
     public function testMorphOneWithoutWithDefaultReturnsNull()
     {
         $business = BusinessWithoutDefault::create(['name' => 'Legacy Ltd.']);
 
         $this->assertNull($business->wallet);
         $this->assertNull(optional($business->wallet)->balance);
+    }
+
+    public function testNonNullablePolymorphicForeignKeysThrowException()
+    {
+        $business = new Business();
+        $business->name = 'Test Business';
+        $business->save();
+
+        $comment = $business->comment;
+
+        $comment->commentable_id = null;
+        $comment->commentable_type = null;
+
+        $this->expectException(MissingForeignKeyException::class);
+        $comment->save();
+    }
+
+    public function testNonNullablePolymorphicForeignKeysCanBeSavedWhenSet()
+    {
+        $business = new Business();
+        $business->name = 'Test Business';
+        $business->save();
+
+        $comment = $business->comment;
+
+        $this->assertEquals($business->id, $comment->commentable_id);
+        $this->assertEquals(Business::class, $comment->commentable_type);
+
+        $result = $comment->save();
+        $this->assertTrue($result);
     }
 
     /**
@@ -209,6 +330,13 @@ class Business extends Model
             'balance' => 0,
         ]);
     }
+
+    public function comment(): MorphOne
+    {
+        return $this->morphOne(Comment::class, 'commentable')->withDefault([
+            'content' => 'Default comment',
+        ]);
+    }
 }
 
 class BusinessWithoutAutoLoad extends Model
@@ -237,6 +365,8 @@ class BusinessWithoutDefault extends Model
 
 class Wallet extends Model
 {
+    use \Illuminate\Database\Eloquent\Concerns\ValidatesDefaultInstances;
+
     protected $table = 'wallets';
     protected $guarded = [];
 
@@ -261,11 +391,52 @@ class Profile extends Model
 
 class TestUserModel extends Model
 {
+    use \Illuminate\Database\Eloquent\Concerns\ValidatesDefaultInstances;
+
     protected $table = 'users';
     protected $guarded = [];
 
     public function profile(): HasOne
     {
         return $this->hasOne(Profile::class, 'user_id');
+    }
+}
+
+class Customer extends Model
+{
+    protected $table = 'customers';
+    protected $guarded = [];
+
+    public function order(): HasOne
+    {
+        return $this->hasOne(Order::class, 'customer_id')->withDefault([
+            'status' => 'pending',
+        ]);
+    }
+}
+
+class Order extends Model
+{
+    use \Illuminate\Database\Eloquent\Concerns\ValidatesDefaultInstances;
+
+    protected $table = 'orders';
+    protected $guarded = [];
+
+    public function customer(): BelongsTo
+    {
+        return $this->belongsTo(Customer::class, 'customer_id');
+    }
+}
+
+class Comment extends Model
+{
+    use \Illuminate\Database\Eloquent\Concerns\ValidatesDefaultInstances;
+
+    protected $table = 'comments';
+    protected $guarded = [];
+
+    public function commentable()
+    {
+        return $this->morphTo();
     }
 }
