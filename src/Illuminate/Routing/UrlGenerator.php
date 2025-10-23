@@ -178,49 +178,64 @@ class UrlGenerator implements UrlGeneratorContract
      * Get the previous path for the request.
      *
      * @param  mixed  $fallback
+     * @param  bool  $securityCheck  Whether to check for potential security vulnerabilities
      * @return string
      */
-    public function previousPath($fallback = false)
+    public function previousPath($fallback = false, $securityCheck = false)
     {
+        if (! $securityCheck) {
+            $previousPath = str_replace($this->to('/'), '', rtrim(preg_replace('/\?.*/', '', $this->previous($fallback)), '/'));
+
+            return $previousPath === '' ? '/' : $previousPath;
+        }
+
         $referrer = $this->request->headers->get('referer');
 
         if (! $referrer) {
             $referrer = $this->getPreviousUrlFromSession();
         }
 
-        // checking the referrer against dangerous schemes (e.g., javascript:, data:, file: etc)
-        // to prevent open redirect vulnerabilities
-        if (! $referrer || $this->isDangerousUrl($referrer)) {
-            $path = $fallback ? parse_url($this->to($fallback), PHP_URL_PATH) ?? '/' : '/';
+        if (! $referrer) {
+            return $this->getPathFromUrl($fallback);
+        }
 
-            return rtrim($path, '/') ?: '/';
+        return $this->getSecurePreviousPath($referrer, $fallback);
+    }
+
+    /**
+     * Get the secure previous path with security checks.
+     *
+     * @param  string  $referrer
+     * @param  mixed  $fallback
+     * @return string
+     */
+    protected function getSecurePreviousPath($referrer, $fallback = false): string
+    {
+        if ($this->isDangerousUrl($referrer)) {
+            return $this->getPathFromUrl($fallback);
         }
 
         $previous = $this->to($referrer);
-
         $previousUrlComponents = parse_url($previous);
         $appUrlComponents = parse_url($this->to('/'));
 
-        // if the previous URL is not from the same origin, we will use the fallback or root URL
         if (! $this->isSameOrigin($previousUrlComponents, $appUrlComponents)) {
             $previous = $fallback ? $this->to($fallback) : $this->to('/');
         }
 
-        $path = parse_url($previous, PHP_URL_PATH) ?? '/';
-
-        return rtrim($path, '/') ?: '/';
+        return $this->getPathFromUrl($previous);
     }
 
     /**
-     * Check for dangerous schemes like javascript, data, file, or vbscript.
+     * Check for dangerous schemes like javascript, data, or file.
      *
      * @param  string  $url
      * @return bool
      */
     protected function isDangerousUrl($url)
     {
-        // will return true if the URL starts with javascript, data, file, or vbscript
-        return preg_match('/^(javascript|data|file|vbscript):/i', $url);
+        // will return true if the URL starts with javascript, data, or file
+        return preg_match('/^(javascript|data|file):/i', $url);
     }
 
     /**
@@ -250,6 +265,19 @@ class UrlGenerator implements UrlGeneratorContract
         return strtolower($hostOne) === strtolower($hostTwo) &&
             $schemeOne === $schemeTwo &&
             $portOne === $portTwo;
+    }
+
+     /**
+     * Extract path from a URL.
+     *
+     * @param  mixed  $url
+     * @return string
+     */
+    protected function getPathFromUrl($url)
+    {
+        $path = $url ? parse_url($this->to($url), PHP_URL_PATH) ?? '/' : '/';
+
+        return rtrim($path, '/') ?: '/';
     }
 
     /**
