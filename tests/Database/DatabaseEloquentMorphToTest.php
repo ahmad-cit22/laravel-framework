@@ -79,7 +79,7 @@ class DatabaseEloquentMorphToTest extends TestCase
 
         $this->builder->shouldReceive('first')->once()->andReturnNull();
 
-        $newModel = (new EloquentMorphToModelStub)->markAsDefaultInstance();
+        $newModel = new EloquentMorphToModelStub;
 
         $this->assertEquals($newModel, $relation->getResults());
     }
@@ -92,7 +92,7 @@ class DatabaseEloquentMorphToTest extends TestCase
 
         $this->builder->shouldReceive('first')->once()->andReturnNull();
 
-        $newModel = (new EloquentMorphToModelStub)->markAsDefaultInstance();
+        $newModel = new EloquentMorphToModelStub;
         $newModel->username = 'taylor';
 
         $result = $relation->getResults();
@@ -108,7 +108,7 @@ class DatabaseEloquentMorphToTest extends TestCase
 
         $this->builder->shouldReceive('first')->once()->andReturnNull();
 
-        $newModel = (new EloquentMorphToModelStub)->markAsDefaultInstance();
+        $newModel = new EloquentMorphToModelStub;
         $newModel->username = 'taylor';
 
         $result = $relation->getResults();
@@ -145,7 +145,7 @@ class DatabaseEloquentMorphToTest extends TestCase
 
         $relation = $parent->relation()->withDefault();
 
-        $newModel = (new EloquentMorphToRelatedStub)->markAsDefaultInstance();
+        $newModel = new EloquentMorphToRelatedStub;
 
         $result = $relation->getResults();
 
