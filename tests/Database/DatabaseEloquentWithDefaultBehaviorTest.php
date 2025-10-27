@@ -197,24 +197,6 @@ class DatabaseEloquentWithDefaultBehaviorTest extends TestCase
         $this->assertTrue($wallet->touch());
     }
 
-    public function testMissingForeignKeyExceptionProvidesDetailedInformation()
-    {
-        $customer = new Customer(['name' => 'Test Customer']);
-        $customer->save();
-
-        $order = $customer->order;
-        $order->customer_id = null;
-
-        try {
-            $order->save();
-            $this->fail('Expected MissingForeignKeyException was not thrown');
-        } catch (MissingForeignKeyException $e) {
-            $this->assertInstanceOf(Order::class, $e->getModel());
-            $this->assertContains('customer_id', $e->getMissingKeys());
-            $this->assertStringContainsString('customer_id', $e->getMessage());
-        }
-    }
-
     public function testNullableForeignKeysDoNotThrowException()
     {
         $business = new Business();
@@ -298,6 +280,41 @@ class DatabaseEloquentWithDefaultBehaviorTest extends TestCase
         $this->assertTrue($result);
     }
 
+    public function testMissingForeignKeyExceptionProvidesDetailedInformation()
+    {
+        $customer = new Customer(['name' => 'Test Customer']);
+        $customer->save();
+
+        $order = $customer->order;
+        $order->customer_id = null;
+
+        try {
+            $order->save();
+            $this->fail('Expected MissingForeignKeyException was not thrown');
+        } catch (MissingForeignKeyException $e) {
+            $this->assertInstanceOf(Order::class, $e->getModel());
+            $this->assertContains('customer_id', $e->getMissingKeys());
+            $this->assertStringContainsString('customer_id', $e->getMessage());
+        }
+    }
+
+    public function testModelWithoutValidatesDefaultInstancesTraitWorksAsBefore()
+    {
+        $customer = new CustomerWithoutValidationTrait(['name' => 'Test Customer']);
+        $customer->save();
+
+        $order = $customer->order;
+
+        $this->assertInstanceOf(OrderWithoutValidationTrait::class, $order);
+
+        $this->assertEquals('pending', $order->status);
+
+        $order->customer_id = null;
+
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        $order->save();
+    }
+
     /**
      * Get a database connection instance.
      *
@@ -323,6 +340,11 @@ class Business extends Model
 {
     protected $table = 'businesses';
     protected $guarded = [];
+
+    public static function booted()
+    {
+        static::automaticallyEagerLoadRelationships();
+    }
 
     public function wallet(): MorphOne
     {
@@ -407,6 +429,11 @@ class Customer extends Model
     protected $table = 'customers';
     protected $guarded = [];
 
+    public static function booted()
+    {
+        static::automaticallyEagerLoadRelationships();
+    }
+
     public function order(): HasOne
     {
         return $this->hasOne(Order::class, 'customer_id')->withDefault([
@@ -438,5 +465,36 @@ class Comment extends Model
     public function commentable()
     {
         return $this->morphTo();
+    }
+}
+
+class OrderWithoutValidationTrait extends Model
+{
+    protected $table = 'orders';
+    protected $guarded = [];
+
+    public function customer(): BelongsTo
+    {
+        return $this->belongsTo(Customer::class, 'customer_id')->withDefault([
+            'name' => 'Default Customer',
+        ]);
+    }
+}
+
+class CustomerWithoutValidationTrait extends Model
+{
+    protected $table = 'customers';
+    protected $guarded = [];
+
+    public static function booted()
+    {
+        static::automaticallyEagerLoadRelationships();
+    }
+
+    public function order(): HasOne
+    {
+        return $this->hasOne(OrderWithoutValidationTrait::class, 'customer_id')->withDefault([
+            'status' => 'pending',
+        ]);
     }
 }

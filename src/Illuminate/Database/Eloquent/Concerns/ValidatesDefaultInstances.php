@@ -109,18 +109,6 @@ trait ValidatesDefaultInstances
     }
 
     /**
-     * Boot the ValidatesDefaultInstances trait for a model.
-     *
-     * @return void
-     */
-    public static function bootValidatesDefaultInstances(): void
-    {
-        static::saving(function ($model) {
-            $model->validateRequiredForeignKeys();
-        });
-    }
-
-    /**
      * Override save method to ensure validation is called for default instances.
      */
     public function save(array $options = [])
